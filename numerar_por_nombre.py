@@ -1,102 +1,378 @@
-import os
-import glob
-from PIL import Image, ImageDraw, ImageFont
+from pathlib import Path
+import cv2
 
-# --- Configuración ---
+
+# ==========================================
+# CONFIGURACIÓN
+# ==========================================
+
 carpeta_entrada = "imagenes_originales"
 carpeta_salida = "imagenes_numeradas"
 
-# Crear la carpeta de salida si no existe
-if not os.path.exists(carpeta_salida):
-    os.makedirs(carpeta_salida)
+# Distancia desde la parte inferior.
+# 0.03 = 3% de la altura de la imagen.
+margen_inferior_porcentaje = 0.03
 
-# Buscar imágenes JPG y PNG
-extensiones = ('*.png', '*.jpg', '*.jpeg')
-imagenes = []
-for ext in extensiones:
-    imagenes.extend(glob.glob(os.path.join(carpeta_entrada, ext)))
+# Color del número en formato BGR
+# Negro = (0, 0, 0)
+color_numero = (0, 0, 0)
 
-if not imagenes:
-    print(f"No se encontraron imágenes en la carpeta '{carpeta_entrada}'.")
+# Grosor del texto
+grosor = 3
+
+
+# ==========================================
+# CREAR CARPETAS
+# ==========================================
+
+entrada = Path(carpeta_entrada)
+salida = Path(carpeta_salida)
+
+salida.mkdir(parents=True, exist_ok=True)
+
+
+# ==========================================
+# OBTENER NÚMERO DEL ARCHIVO
+# ==========================================
+
+def obtener_numero(nombre):
+    """
+    Obtiene el número del nombre del archivo.
+
+    Ejemplos:
+
+    001.png -> 1
+    002.png -> 2
+    017.png -> 17
+    125.png -> 125
+    """
+
+    try:
+        return int(Path(nombre).stem)
+    except ValueError:
+        return None
+
+
+# ==========================================
+# AGREGAR NÚMERO
+# ==========================================
+
+def agregar_numero(imagen, numero):
+
+    texto = str(numero)
+
+    # --------------------------------------
+    # Dimensiones de la imagen
+    # --------------------------------------
+
+    alto_imagen, ancho_imagen = imagen.shape[:2]
+
+    # --------------------------------------
+    # Fuente OpenCV
+    # --------------------------------------
+
+    fuente = cv2.FONT_HERSHEY_SIMPLEX
+
+    # --------------------------------------
+    # Tamaño proporcional de la fuente
+    # --------------------------------------
+
+    # Una imagen de 1000 px de alto tendrá
+    # aproximadamente escala 1.0.
+    escala = max(1.0, alto_imagen / 1000)
+
+    # --------------------------------------
+    # Obtener dimensiones del texto
+    # --------------------------------------
+
+    (ancho_texto, alto_texto), baseline = cv2.getTextSize(
+        texto,
+        fuente,
+        escala,
+        grosor
+    )
+
+    # --------------------------------------
+    # Centrar horizontalmente
+    # --------------------------------------
+
+    x = (ancho_imagen - ancho_texto) // 2
+
+    # --------------------------------------
+    # Margen inferior proporcional
+    # --------------------------------------
+
+    margen_inferior = int(
+        alto_imagen * margen_inferior_porcentaje
+    )
+
+    # --------------------------------------
+    # Posición vertical
+    # --------------------------------------
+
+    # OpenCV utiliza la coordenada Y como
+    # la línea BASE del texto.
+    y = alto_imagen - margen_inferior - baseline
+
+    # --------------------------------------
+    # Dibujar número
+    # --------------------------------------
+
+    cv2.putText(
+        imagen,
+        texto,
+        (x, y),
+        fuente,
+        escala,
+        color_numero,
+        grosor,
+        cv2.LINE_AA
+    )
+
+    return imagen
+
+
+# ==========================================
+# EXTENSIONES PERMITIDAS
+# ==========================================
+
+extensiones = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp"
+}
+
+
+# ==========================================
+# VERIFICAR CARPETA DE ENTRADA
+# ==========================================
+
+if not entrada.exists():
+
+    print("❌ ERROR")
+    print()
+    print(f"No existe la carpeta:")
+    print(f"   {entrada.resolve()}")
+    print()
+    print("Crea la carpeta 'imagenes_originales' y coloca")
+    print("las imágenes dentro de ella.")
+
+    exit()
+
+
+# ==========================================
+# OBTENER ARCHIVOS
+# ==========================================
+
+archivos = [
+    archivo
+    for archivo in entrada.iterdir()
+    if archivo.is_file()
+    and archivo.suffix.lower() in extensiones
+]
+
+
+# ==========================================
+# ORDENAR POR NÚMERO
+# ==========================================
+
+archivos.sort(
+    key=lambda archivo: (
+        obtener_numero(archivo.name)
+        if obtener_numero(archivo.name) is not None
+        else float("inf")
+    )
+)
+
+
+# ==========================================
+# PROCESAMIENTO
+# ==========================================
+
+if not archivos:
+
+    print("⚠️ No se encontraron imágenes.")
+    print()
+    print(f"Revisa la carpeta:")
+    print(f"   {entrada.resolve()}")
+
 else:
-    for ruta_imagen in imagenes:
-        nombre_archivo = os.path.basename(ruta_imagen)
-        nombre_sin_ext = os.path.splitext(nombre_archivo)[0]
 
-        try:
-            img = Image.open(ruta_imagen)
+    print()
+    print("==========================================")
+    print("     NUMERANDO IMÁGENES")
+    print("==========================================")
+    print()
+    print(f"Entrada : {entrada.resolve()}")
+    print(f"Salida  : {salida.resolve()}")
+    print(f"Imágenes: {len(archivos)}")
+    print()
 
-            # Si el archivo se llama "0", lo copiamos sin modificar
-            if nombre_sin_ext == "0":
-                ruta_salida = os.path.join(carpeta_salida, nombre_archivo)
-                if img.mode in ("RGBA", "P") and ruta_salida.lower().endswith(('.jpg', '.jpeg')):
-                    img = img.convert("RGB")
-                img.save(ruta_salida)
-                print(f"⏩ Omitida numeración para {nombre_archivo} (Copiada intacta)")
-                continue
+    procesadas = 0
+    errores = 0
 
-            draw = ImageDraw.Draw(img)
-            ancho_img, alto_img = img.size
+    for archivo in archivos:
 
-            # --- Búsqueda robusta de fuente ---
-            rutas_fuente = [
-                "arial.ttf",
-                "C:/Windows/Fonts/arial.ttf",
-                "/System/Library/Fonts/Supplemental/Arial.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            ]
-            font = None
-            for ruta in rutas_fuente:
-                try:
-                    font = ImageFont.truetype(ruta, 45)
-                    break
-                except IOError:
-                    continue
-            if font is None:
-                font = ImageFont.load_default()
+        numero = obtener_numero(archivo.name)
 
-            texto = nombre_sin_ext
-            x_centro = ancho_img / 2
+        # ----------------------------------
+        # Ignorar archivos sin número
+        # ----------------------------------
 
-            # ------------------------------------------------------------------
-            # PARCHE BLANCO GRANDE: cubre tanto la posición del número nuevo
-            # como la posición del número original impreso en el escaneo
-            # (el "50" que se veía debajo del parche pequeño).
-            #
-            # Ajusta estos dos valores si el número viejo queda muy arriba
-            # o muy abajo respecto al que estás viendo en tus imágenes:
-            #   y_top_parche    -> dónde empieza el parche (más arriba = número más grande)
-            #   y_bottom_parche -> dónde termina el parche (más abajo = tapa más)
-            # ------------------------------------------------------------------
-            y_top_parche = alto_img - 150     # antes: alto_img - 120 (ahora un poco más alto)
-            y_bottom_parche = alto_img - 30   # baja lo suficiente para tapar el número viejo
+        if numero is None:
 
-            margen_parche = 60  # más ancho que antes, por si el número viejo no está perfectamente centrado
-
-            draw.rectangle(
-                [x_centro - margen_parche, y_top_parche, x_centro + margen_parche, y_bottom_parche],
-                fill="white"
+            print(
+                f"⚠️ Ignorado: {archivo.name} "
+                f"(el nombre no contiene un número)"
             )
 
-            # Calcular posición del texto centrado dentro del parche
-            bbox = draw.textbbox((0, 0), texto, font=font)
-            ancho_texto = bbox[2] - bbox[0]
-            alto_texto = bbox[3] - bbox[1]
+            continue
 
-            x_texto = x_centro - (ancho_texto / 2)
-            y_texto = y_top_parche + ((y_bottom_parche - y_top_parche) - alto_texto) / 2 - bbox[1]
+        print(
+            f"Procesando: {archivo.name} "
+            f"→ número {numero}"
+        )
 
-            draw.text((x_texto, y_texto), texto, font=font, fill="black")
+        try:
 
-            ruta_salida = os.path.join(carpeta_salida, nombre_archivo)
+            # ----------------------------------
+            # Leer imagen
+            # ----------------------------------
 
-            if img.mode in ("RGBA", "P") and ruta_salida.lower().endswith(('.jpg', '.jpeg')):
-                img = img.convert("RGB")
+            imagen = cv2.imread(
+                str(archivo),
+                cv2.IMREAD_UNCHANGED
+            )
 
-            img.save(ruta_salida)
-            print(f"✅ Procesada: {nombre_archivo} -> Numerada como '{texto}' (número original tapado)")
+            # ----------------------------------
+            # Validar imagen
+            # ----------------------------------
 
-        except Exception as e:
-            print(f"❌ Error procesando {ruta_imagen}: {e}")
+            if imagen is None:
 
-    print("\n¡Proceso completado! Revisa la carpeta 'imagenes_numeradas'.")
+                print(
+                    f"   ❌ No se pudo abrir la imagen"
+                )
+
+                errores += 1
+                continue
+
+            # ----------------------------------
+            # Manejar imágenes grayscale
+            # ----------------------------------
+
+            if len(imagen.shape) == 2:
+
+                imagen = cv2.cvtColor(
+                    imagen,
+                    cv2.COLOR_GRAY2BGR
+                )
+
+            # ----------------------------------
+            # Manejar PNG con transparencia
+            # ----------------------------------
+
+            elif (
+                len(imagen.shape) == 3
+                and imagen.shape[2] == 4
+            ):
+
+                # OpenCV carga PNG como BGRA.
+                #
+                # Conservamos la imagen RGBA/BGRA
+                # para no perder transparencia.
+
+                agregar_numero(
+                    imagen,
+                    numero
+                )
+
+            # ----------------------------------
+            # Imagen normal BGR
+            # ----------------------------------
+
+            else:
+
+                agregar_numero(
+                    imagen,
+                    numero
+                )
+
+            # ----------------------------------
+            # Agregar número si tiene alpha
+            # ----------------------------------
+
+            if (
+                len(imagen.shape) == 3
+                and imagen.shape[2] == 4
+            ):
+
+                # El texto ya fue dibujado sobre
+                # los canales BGR.
+                pass
+
+            # ----------------------------------
+            # Ruta de salida
+            # ----------------------------------
+
+            destino = salida / archivo.name
+
+            # ----------------------------------
+            # Guardar
+            # ----------------------------------
+
+            guardado = cv2.imwrite(
+                str(destino),
+                imagen
+            )
+
+            if not guardado:
+
+                print(
+                    f"   ❌ No se pudo guardar: "
+                    f"{destino}"
+                )
+
+                errores += 1
+                continue
+
+            procesadas += 1
+
+            print(
+                f"   ✓ Guardado: {destino}"
+            )
+
+        except Exception as error:
+
+            errores += 1
+
+            print(
+                f"   ❌ Error procesando "
+                f"{archivo.name}:"
+            )
+
+            print(
+                f"      {error}"
+            )
+
+
+# ==========================================
+# RESUMEN
+# ==========================================
+
+print()
+print("==========================================")
+print("           PROCESO TERMINADO")
+print("==========================================")
+print()
+print(f"✓ Procesadas : {procesadas}")
+print(f"❌ Errores   : {errores}")
+print()
+print(f"Entrada:")
+print(f"  {entrada.resolve()}")
+print()
+print(f"Salida:")
+print(f"  {salida.resolve()}")
+print()
+print("==========================================")
